@@ -2,6 +2,40 @@ let activeTaskId = null;
 let pollInterval = null;
 let allResults = [];
 
+// ================= Theme Switcher (Default: Light) =================
+function initTheme() {
+    const savedTheme = localStorage.getItem('app_theme') || 'light';
+    applyTheme(savedTheme);
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    applyTheme(newTheme);
+    localStorage.setItem('app_theme', newTheme);
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const sunIcon = document.querySelector('.sun-icon');
+    const moonIcon = document.querySelector('.moon-icon');
+    const themeLabel = document.getElementById('theme-label');
+
+    if (theme === 'dark') {
+        if (sunIcon) sunIcon.style.display = 'none';
+        if (moonIcon) moonIcon.style.display = 'inline-block';
+        if (themeLabel) themeLabel.textContent = 'Dark Mode';
+    } else {
+        if (sunIcon) sunIcon.style.display = 'inline-block';
+        if (moonIcon) moonIcon.style.display = 'none';
+        if (themeLabel) themeLabel.textContent = 'Light Mode';
+    }
+}
+
+// Initialize theme immediately
+initTheme();
+
+// ================= UI Helpers & Presets =================
 function updateDepthLabel(val) {
     const approx = val * 20;
     document.getElementById('pages-val').textContent = `${val} (approx. ${approx - 10}-${approx + 20} leads)`;
@@ -14,6 +48,7 @@ function setPreset(query, places, pages) {
     updateDepthLabel(pages);
 }
 
+// ================= Form & Scraping Logic =================
 document.getElementById('scrape-form').addEventListener('submit', async function(e) {
     e.preventDefault();
     
@@ -147,7 +182,7 @@ function setScrapingState(isScraping) {
             <span>Stop</span>
         `;
         liveIndicator.style.display = 'inline-block';
-        statusPill.innerHTML = '<span class="status-dot" style="background:#06B6D4;box-shadow:0 0 10px #06B6D4;"></span> Scraping Active';
+        statusPill.innerHTML = '<span class="status-dot" style="background:#0284C7;box-shadow:0 0 10px #0284C7;"></span> Scraping Active';
     } else {
         startBtn.style.display = 'inline-flex';
         stopBtn.style.display = 'none';
@@ -200,7 +235,7 @@ function renderTable(results) {
             <tr>
                 <td style="color: var(--text-dim); font-weight: 600;">${index + 1}</td>
                 <td><strong>${escapeHtml(item.name)}</strong></td>
-                <td><span style="font-family: monospace; color: var(--accent-cyan);">${escapeHtml(item.phone || 'N/A')}</span></td>
+                <td><span style="font-family: monospace; color: var(--accent-cyan); font-weight:600;">${escapeHtml(item.phone || 'N/A')}</span></td>
                 <td><small style="color: var(--text-muted);">${escapeHtml(item.address || 'N/A')}</small></td>
                 <td>${webHtml}</td>
                 <td>${mapsHtml}</td>
