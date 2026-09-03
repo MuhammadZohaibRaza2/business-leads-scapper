@@ -239,13 +239,23 @@ def run_scraper_thread(task_id, params):
             task["status"] = "completed"
 
     except Exception as e:
+        err_msg = str(e)
         if task.get("aborted"):
-            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Scraping stopped.")
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Scraping stopped by user.")
             task["status"] = "stopped"
-        else:
-            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {str(e)}")
+        elif "Unable to obtain driver for chrome" in err_msg or "chromedriver" in err_msg or "NoSuchDriver" in err_msg:
+            task["logs"].append(
+                f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Chrome Browser is not installed in this Serverless environment (Vercel Lambda)."
+            )
+            task["logs"].append(
+                f"[{datetime.now().strftime('%H:%M:%S')}] 👉 To scrape live Google Maps leads, run the app locally on your Mac ('python3 app.py') or deploy with Docker/Render."
+            )
             task["status"] = "failed"
-            task["error"] = str(e)
+            task["error"] = "Chrome binary not available in serverless environment"
+        else:
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {err_msg}")
+            task["status"] = "failed"
+            task["error"] = err_msg
     finally:
         task["finished_at"] = time.time()
         if driver:
@@ -430,7 +440,17 @@ def download_csv(task_id):
     )
 
 
+def find_available_port(start_port=5001, max_tries=10):
+    import socket
+    for p in range(start_port, start_port + max_tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", p)) != 0:
+                return p
+    return start_port
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))
+    requested_port = int(os.environ.get("PORT", 5001))
+    port = find_available_port(requested_port)
     print(f"Server starting on http://localhost:{port}")
     app.run(host="0.0.0.0", port=port, debug=False)
