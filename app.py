@@ -19,7 +19,13 @@ from selenium.webdriver.support import expected_conditions as EC
 import urllib.parse
 from modules.helpers import get_website_data
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static"),
+)
 
 # Global storage for background tasks
 tasks = {}
