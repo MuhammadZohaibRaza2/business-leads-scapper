@@ -30,7 +30,7 @@ document.getElementById('scrape-form').addEventListener('submit', async function
 
     setScrapingState(true);
     clearResults();
-    logEntry(`Starting new scrape task for: "${query}" in "${places}"...`, 'info');
+    logEntry(`Starting scraper for: "${query}" in "${places}"...`, 'info');
 
     try {
         const response = await fetch('/api/scrape', {
@@ -41,8 +41,7 @@ document.getElementById('scrape-form').addEventListener('submit', async function
                 places: places,
                 pages: pages,
                 skip_duplicates: skipDuplicates,
-                scrape_website: scrapeWebsite,
-                headless: true
+                scrape_website: scrapeWebsite
             })
         });
 
@@ -78,39 +77,57 @@ function startPolling(taskId) {
             updateLogs(data.logs);
 
             // Results Table
-            if (data.results && data.results.length > allResults.length) {
+            if (data.results && data.results.length !== allResults.length) {
                 allResults = data.results;
                 renderTable(allResults);
                 updateWebPhoneStats(allResults);
             }
 
-            // Check if finished
-            if (data.status === 'completed' || data.status === 'failed') {
+            // Check if finished or stopped
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
                 clearInterval(pollInterval);
                 setScrapingState(false);
-                enableDownloadButtons(taskId);
+                
+                if (data.count > 0) {
+                    enableDownloadButtons(taskId);
+                }
 
                 if (data.status === 'completed') {
-                    logEntry(`Task completed! Found ${data.count} leads in ${data.elapsed}s.`, 'success');
+                    logEntry(`Completed! Extracted ${data.count} leads in ${data.elapsed}s.`, 'success');
+                } else if (data.status === 'stopped') {
+                    logEntry(`Scraper stopped. Saved ${data.count} leads.`, 'info');
                 } else {
-                    logEntry(`Task ended with error.`, 'error');
+                    logEntry(`Scraper stopped with an issue.`, 'error');
                 }
             }
         } catch (err) {
             console.error(err);
         }
-    }, 1200);
+    }, 800);
 }
 
 async function stopCurrentScrape() {
     if (!activeTaskId) return;
+    
+    logEntry('Stopping scraper immediately...', 'system');
+    const stopBtn = document.getElementById('stop-btn');
+    stopBtn.disabled = true;
+    stopBtn.innerHTML = '<span>Stopping...</span>';
+
     try {
-        logEntry('Sending stop signal...', 'system');
         await fetch(`/api/stop/${activeTaskId}`, { method: 'POST' });
-        document.getElementById('stop-btn').disabled = true;
     } catch (err) {
         console.error(err);
     }
+
+    if (pollInterval) clearInterval(pollInterval);
+    setTimeout(() => {
+        setScrapingState(false);
+        if (allResults.length > 0) {
+            enableDownloadButtons(activeTaskId);
+        }
+        logEntry(`Scraper stopped. ${allResults.length} leads preserved.`, 'info');
+    }, 500);
 }
 
 function setScrapingState(isScraping) {
@@ -123,6 +140,12 @@ function setScrapingState(isScraping) {
         startBtn.style.display = 'none';
         stopBtn.style.display = 'inline-flex';
         stopBtn.disabled = false;
+        stopBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="6" width="12" height="12"></rect>
+            </svg>
+            <span>Stop</span>
+        `;
         liveIndicator.style.display = 'inline-block';
         statusPill.innerHTML = '<span class="status-dot" style="background:#06B6D4;box-shadow:0 0 10px #06B6D4;"></span> Scraping Active';
     } else {
@@ -141,7 +164,7 @@ function clearResults() {
                 <div class="empty-content">
                     <div class="empty-icon">⏳</div>
                     <h3>Scraping In Progress...</h3>
-                    <p>Live listings will appear here automatically as they are found.</p>
+                    <p>Results will stream in within seconds.</p>
                 </div>
             </td>
         </tr>

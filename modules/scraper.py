@@ -14,6 +14,70 @@ import re
 import urllib.parse
 import xlsxwriter
 
+JS_EXTRACT_ALL_CARDS = r'''
+const cards = document.querySelectorAll('div.Nv2PK');
+const results = [];
+cards.forEach(card => {
+    const text = card.innerText || '';
+    const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!lines.length) return;
+    
+    let name = lines[0];
+    const nameEl = card.querySelector('div.qBF1Pd');
+    if (nameEl && nameEl.innerText.trim()) {
+        name = nameEl.innerText.trim();
+    }
+    
+    let mapsLink = '';
+    const linkEl = card.querySelector('a.hfpxzc');
+    if (linkEl && linkEl.href) {
+        mapsLink = linkEl.href;
+    }
+    
+    let website = '';
+    const webEl = card.querySelector('a[data-value="Website"], a[aria-label*="Website"]');
+    if (webEl && webEl.href) {
+        website = webEl.href;
+    }
+    
+    let phone = '';
+    const phoneMatches = text.match(/(\+?92[\s\d-]{8,}|\(0\d{2,3}\)[\s\d-]+|03\d{2}[\s\d-]{7,}|\+?\d{1,3}[\s-]\(?\d{2,4}\)?[\s-]\d{3,4}[\s-]\d{3,4})/);
+    if (phoneMatches) {
+        phone = phoneMatches[0].trim();
+    }
+    
+    let address = '';
+    for (let line of lines) {
+        if (line.includes('·') && !line.includes('Open') && !line.includes('Closed') && line !== lines[0]) {
+            const parts = line.split('·').map(p => p.trim()).filter(Boolean);
+            if (parts.length > 1) {
+                address = parts[parts.length - 1];
+            }
+        }
+    }
+    if (!address && lines.length > 2) {
+        for (let i = 1; i < lines.length; i++) {
+            const c = lines[i];
+            if (!c.includes('Open') && !c.includes('Closed') && !c.includes('Directions') && !c.includes('Website') && !c.includes('★') && !/^\d\.\d$/.test(c)) {
+                address = c;
+                break;
+            }
+        }
+    }
+    
+    results.push({
+        name: name,
+        phone: phone,
+        address: address,
+        has_website: website ? 'Yes' : 'No',
+        website: website,
+        maps_link: mapsLink,
+        email: ''
+    });
+});
+return results;
+'''
+
 def scrape(args):
     '''
     Scrapes the results and puts them in the excel spreadsheet.
@@ -36,9 +100,8 @@ def scrape(args):
     options.add_argument('--lang=en-US')
     options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36')
 
-    # Created driver and wait
     driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 15)
+    wait = WebDriverWait(driver, 10)
 
     # Initialize workbook / worksheet
     workbook = xlsxwriter.Workbook('ScrapedData_GoogleMaps.xlsx')
@@ -57,12 +120,9 @@ def scrape(args):
     headers = generate_headers(args, data_template.copy())
     print_table_headers(worksheet, headers)
 
-    # Start from second row in xlsx, as first one is reserved for headers
     row = 1
-
-    # Remember scraped addresses to skip duplicates
-    addresses_scraped = {}
-    scraped_names = set()
+    addresses_scraped = set()
+    names_scraped = set()
 
     start_time = time.time()
 
@@ -74,8 +134,7 @@ def scrape(args):
         search_url = f"https://www.google.com/maps/search/{encoded_query}?hl=en"
         driver.get(search_url)
 
-        # Wait for page or feed to load
-        time.sleep(4)
+        time.sleep(2.5)
 
         # Handle consent popup if present
         try:
@@ -83,7 +142,7 @@ def scrape(args):
             for btn in buttons:
                 if btn.text in ['Accept all', 'Agree', 'I agree']:
                     btn.click()
-                    time.sleep(2)
+                    time.sleep(1)
                     break
         except Exception:
             pass
@@ -98,114 +157,50 @@ def scrape(args):
             except Exception:
                 pass
 
-        # Scroll to load requested depth of results
-        # Each scroll loads ~10-20 more results
+        # Fast Scrolling
         scroll_iterations = max(1, SETTINGS["PAGE_DEPTH"] * 3)
         if feed:
             for s in range(scroll_iterations):
                 driver.execute_script('arguments[0].scrollTop = arguments[0].scrollHeight', feed)
-                time.sleep(2)
+                time.sleep(0.7)
 
-        # Find all cards
-        cards = driver.find_elements(By.XPATH, '//div[contains(@class, "Nv2PK")]')
+        # Batch extraction via JS
+        cards = driver.execute_script(JS_EXTRACT_ALL_CARDS) or []
         print(f"{fore.GREEN}Found {len(cards)} places for {place}{fore.RESET}")
 
-        for box in cards:
-            try:
-                text = box.text
-                lines = [l.strip() for l in text.split('\n') if l.strip()]
-                if not lines:
-                    continue
+        for current_data in cards:
+            name = current_data.get("name", "")
+            address = current_data.get("address", "")
+            website = current_data.get("website", "")
+            phone = current_data.get("phone", "")
 
-                # Name
-                name = lines[0]
-                try:
-                    title_el = box.find_element(By.XPATH, './/div[contains(@class, "qBF1Pd")]')
-                    if title_el and title_el.text.strip():
-                        name = title_el.text.strip()
-                except Exception:
-                    pass
+            scraped = address in addresses_scraped if address else (name in names_scraped)
 
-                # Google Maps Link
-                maps_link = ""
-                try:
-                    link_el = box.find_element(By.XPATH, './/a[contains(@class, "hfpxzc")]')
-                    maps_link = link_el.get_attribute('href') or ""
-                except Exception:
-                    pass
-
-                # Website
-                website = ""
-                try:
-                    web_el = box.find_element(By.XPATH, './/a[@data-value="Website" or contains(@aria-label, "Website")]')
-                    website = web_el.get_attribute('href') or ""
-                except Exception:
-                    pass
-
-                has_website = "Yes" if bool(website) else "No"
-
-                # Phone number
-                phone = ""
-                phone_matches = re.findall(r'(\+?92[\s\d-]{8,}|\(0\d{2,3}\)[\s\d-]+|03\d{2}[\s\d-]{7,}|\+?\d{1,3}[\s-]\(?\d{2,4}\)?[\s-]\d{3,4}[\s-]\d{3,4})', text)
-                if phone_matches:
-                    phone = phone_matches[0].strip()
-
-                # Address
-                address = ""
-                for line in lines:
-                    if '·' in line and not any(k in line for k in ['Open', 'Closed', 'Opens', 'Closes', '24 hours']) and line != lines[0]:
-                        parts = [p.strip() for p in line.split('·') if p.strip()]
-                        if len(parts) > 1:
-                            address = parts[-1]
-                if not address and len(lines) > 2:
-                    # Fallback address guess
-                    for candidate in lines[1:]:
-                        if not any(k in candidate for k in ['Open', 'Closed', 'Directions', 'Website', 'reviews', '★', 'Reviews']) and not re.match(r'^\d\.\d$', candidate):
-                            address = candidate
-                            break
-
-                scraped = address in addresses_scraped if address else (name in scraped_names)
-
-                if scraped and args.skip_duplicate_addresses:
-                    print(f"{fore.WARNING}Skipping {name} as duplicate{fore.RESET}")
-                    continue
-
-                if address:
-                    addresses_scraped[address] = addresses_scraped.get(address, 0) + 1
-                scraped_names.add(name)
-
-                print(f"{fore.GREEN}Currently scraping{fore.RESET}: {name} | Has Website: {has_website} | Phone: {phone or 'N/A'}")
-
-                current_data = {
-                    "name": name,
-                    "phone": phone,
-                    "address": address,
-                    "has_website": has_website,
-                    "website": website,
-                    "maps_link": maps_link,
-                    "email": ""
-                }
-
-                if args.scrape_website and website:
-                    try:
-                        web_url, emails = get_website_data(website)
-                        if web_url:
-                            current_data["website"] = web_url
-                        if emails:
-                            current_data["email"] = ','.join(emails)
-                    except Exception as e:
-                        pass
-                elif not args.scrape_website:
-                    current_data.pop("email", None)
-
-                if args.verbose:
-                    print(json.dumps(current_data, indent=1))
-
-                write_data_row(worksheet, current_data, row)
-                row += 1
-
-            except Exception as item_err:
+            if scraped and args.skip_duplicate_addresses:
+                print(f"{fore.WARNING}Skipping {name} as duplicate{fore.RESET}")
                 continue
+
+            if address:
+                addresses_scraped.add(address)
+            names_scraped.add(name)
+
+            print(f"{fore.GREEN}Scraped{fore.RESET}: {name} | Phone: {phone or 'N/A'} | Web: {current_data.get('has_website')}")
+
+            if args.scrape_website and website:
+                try:
+                    web_url, emails = get_website_data(website)
+                    if emails:
+                        current_data["email"] = ', '.join(emails)
+                except Exception:
+                    pass
+            elif not args.scrape_website:
+                current_data.pop("email", None)
+
+            if args.verbose:
+                print(json.dumps(current_data, indent=1))
+
+            write_data_row(worksheet, current_data, row)
+            row += 1
 
         print("-------------------")
 

@@ -6,6 +6,7 @@ import threading
 import io
 import csv
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template, request, jsonify, send_file
 import xlsxwriter
 
@@ -16,7 +17,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 import urllib.parse
-import re
 from modules.helpers import get_website_data
 
 app = Flask(__name__)
@@ -24,28 +24,96 @@ app = Flask(__name__)
 # Global storage for background tasks
 tasks = {}
 
+JS_EXTRACT_ALL_CARDS = r'''
+const cards = document.querySelectorAll('div.Nv2PK');
+const results = [];
+cards.forEach(card => {
+    const text = card.innerText || '';
+    const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!lines.length) return;
+    
+    // Title/Name
+    let name = lines[0];
+    const nameEl = card.querySelector('div.qBF1Pd');
+    if (nameEl && nameEl.innerText.trim()) {
+        name = nameEl.innerText.trim();
+    }
+    
+    // Google Maps Link
+    let mapsLink = '';
+    const linkEl = card.querySelector('a.hfpxzc');
+    if (linkEl && linkEl.href) {
+        mapsLink = linkEl.href;
+    }
+    
+    // Website Link
+    let website = '';
+    const webEl = card.querySelector('a[data-value="Website"], a[aria-label*="Website"]');
+    if (webEl && webEl.href) {
+        website = webEl.href;
+    }
+    
+    // Phone Number Regex
+    let phone = '';
+    const phoneMatches = text.match(/(\+?92[\s\d-]{8,}|\(0\d{2,3}\)[\s\d-]+|03\d{2}[\s\d-]{7,}|\+?\d{1,3}[\s-]\(?\d{2,4}\)?[\s-]\d{3,4}[\s-]\d{3,4})/);
+    if (phoneMatches) {
+        phone = phoneMatches[0].trim();
+    }
+    
+    // Address Extraction
+    let address = '';
+    for (let line of lines) {
+        if (line.includes('·') && !line.includes('Open') && !line.includes('Closed') && line !== lines[0]) {
+            const parts = line.split('·').map(p => p.trim()).filter(Boolean);
+            if (parts.length > 1) {
+                address = parts[parts.length - 1];
+            }
+        }
+    }
+    if (!address && lines.length > 2) {
+        for (let i = 1; i < lines.length; i++) {
+            const c = lines[i];
+            if (!c.includes('Open') && !c.includes('Closed') && !c.includes('Directions') && !c.includes('Website') && !c.includes('★') && !/^\d\.\d$/.test(c)) {
+                address = c;
+                break;
+            }
+        }
+    }
+    
+    results.push({
+        name: name,
+        phone: phone,
+        address: address,
+        has_website: website ? 'Yes' : 'No',
+        website: website,
+        maps_link: mapsLink,
+        email: ''
+    });
+});
+return results;
+'''
+
 def run_scraper_thread(task_id, params):
     task = tasks[task_id]
     task["status"] = "running"
     task["started_at"] = time.time()
-    task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Initializing Chrome WebDriver...")
+    task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Launching browser...")
 
     query_base = params.get("query", "").strip()
     places_raw = params.get("places", "").strip()
     places = [p.strip() for p in places_raw.split(",") if p.strip()] or [""]
-    pages = int(params.get("pages", 1))
+    pages = int(params.get("pages", 2))
     scrape_website = params.get("scrape_website", False)
     skip_duplicates = params.get("skip_duplicates", True)
-    headless = params.get("headless", True)
 
     options = Options()
-    if headless:
-        options.add_argument("--headless=new")
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     )
@@ -53,25 +121,25 @@ def run_scraper_thread(task_id, params):
     driver = None
     try:
         driver = webdriver.Chrome(options=options)
-        wait = WebDriverWait(driver, 15)
+        task["driver"] = driver
+        wait = WebDriverWait(driver, 10)
 
         addresses_seen = set()
         names_seen = set()
 
         for place in places:
             if task.get("aborted"):
-                task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Task cancelled by user.")
                 break
 
             full_query = f"{query_base} {place}".strip()
-            task["current_query"] = full_query
-            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Searching Google Maps for: '{full_query}'")
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Searching: '{full_query}'")
 
             encoded_query = urllib.parse.quote_plus(full_query)
             search_url = f"https://www.google.com/maps/search/{encoded_query}?hl=en"
             driver.get(search_url)
 
-            time.sleep(3)
+            # Short wait for results
+            time.sleep(2.5)
 
             # Accept consent if present
             try:
@@ -79,11 +147,12 @@ def run_scraper_thread(task_id, params):
                 for btn in buttons:
                     if btn.text in ["Accept all", "Agree", "I agree"]:
                         btn.click()
-                        time.sleep(1.5)
+                        time.sleep(1)
                         break
             except Exception:
                 pass
 
+            # Find feed
             feed = None
             try:
                 feed = wait.until(EC.presence_of_element_located((By.XPATH, '//div[@role="feed"]')))
@@ -93,131 +162,92 @@ def run_scraper_thread(task_id, params):
                 except Exception:
                     pass
 
-            scroll_times = max(1, pages * 3)
+            # Fast scrolling
+            scroll_count = max(1, pages * 3)
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Scrolling feed for deep results...")
+
             if feed:
-                task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Scrolling results feed ({scroll_times} scrolls)...")
-                for s in range(scroll_times):
+                for s in range(scroll_count):
                     if task.get("aborted"):
                         break
                     driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", feed)
-                    time.sleep(1.5)
+                    time.sleep(0.7)
 
-            cards = driver.find_elements(By.XPATH, '//div[contains(@class, "Nv2PK")]')
-            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(cards)} items for '{place}'. Extracting data...")
+            if task.get("aborted"):
+                break
 
-            for box in cards:
+            # Lightning-fast JS extraction
+            extracted = driver.execute_script(JS_EXTRACT_ALL_CARDS) or []
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {len(extracted)} places.")
+
+            for item in extracted:
                 if task.get("aborted"):
                     break
-                try:
-                    text = box.text
-                    lines = [l.strip() for l in text.split("\n") if l.strip()]
-                    if not lines:
+                addr = item.get("address", "").strip()
+                name = item.get("name", "").strip()
+
+                if skip_duplicates:
+                    if addr and addr in addresses_seen:
+                        continue
+                    if not addr and name in names_seen:
                         continue
 
-                    # Name
-                    name = lines[0]
+                if addr:
+                    addresses_seen.add(addr)
+                names_seen.add(name)
+
+                task["results"].append(item)
+                task["count"] = len(task["results"])
+
+        # Asynchronous Email discovery if requested
+        if scrape_website and not task.get("aborted"):
+            websites_to_crawl = [
+                (idx, item["website"]) for idx, item in enumerate(task["results"]) if item.get("website")
+            ]
+            if websites_to_crawl:
+                task["logs"].append(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Checking {len(websites_to_crawl)} websites for emails in parallel..."
+                )
+
+                def check_email_worker(target):
+                    if task.get("aborted"):
+                        return
+                    idx, url = target
                     try:
-                        title_el = box.find_element(By.XPATH, './/div[contains(@class, "qBF1Pd")]')
-                        if title_el and title_el.text.strip():
-                            name = title_el.text.strip()
+                        _, emails = get_website_data(url)
+                        if emails:
+                            task["results"][idx]["email"] = ", ".join(emails)
                     except Exception:
                         pass
 
-                    # Google Maps link
-                    maps_link = ""
-                    try:
-                        link_el = box.find_element(By.XPATH, './/a[contains(@class, "hfpxzc")]')
-                        maps_link = link_el.get_attribute("href") or ""
-                    except Exception:
-                        pass
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    list(executor.map(check_email_worker, websites_to_crawl))
 
-                    # Website
-                    website = ""
-                    try:
-                        web_el = box.find_element(
-                            By.XPATH, './/a[@data-value="Website" or contains(@aria-label, "Website")]'
-                        )
-                        website = web_el.get_attribute("href") or ""
-                    except Exception:
-                        pass
-
-                    has_website = "Yes" if bool(website) else "No"
-
-                    # Phone number
-                    phone = ""
-                    phone_matches = re.findall(
-                        r"(\+?92[\s\d-]{8,}|\(0\d{2,3}\)[\s\d-]+|03\d{2}[\s\d-]{7,}|\+?\d{1,3}[\s-]\(?\d{2,4}\)?[\s-]\d{3,4}[\s-]\d{3,4})",
-                        text,
-                    )
-                    if phone_matches:
-                        phone = phone_matches[0].strip()
-
-                    # Address
-                    address = ""
-                    for line in lines:
-                        if "·" in line and not any(k in line for k in ["Open", "Closed", "Opens", "Closes", "24 hours"]) and line != lines[0]:
-                            parts = [p.strip() for p in line.split("·") if p.strip()]
-                            if len(parts) > 1:
-                                address = parts[-1]
-                    if not address and len(lines) > 2:
-                        for candidate in lines[1:]:
-                            if not any(
-                                k in candidate
-                                for k in ["Open", "Closed", "Directions", "Website", "reviews", "★", "Reviews"]
-                            ) and not re.match(r"^\d\.\d$", candidate):
-                                address = candidate
-                                break
-
-                    # Duplication check
-                    if skip_duplicates:
-                        if address and address in addresses_seen:
-                            continue
-                        if not address and name in names_seen:
-                            continue
-
-                    if address:
-                        addresses_seen.add(address)
-                    names_seen.add(name)
-
-                    email = ""
-                    if scrape_website and website:
-                        try:
-                            web_url, emails = get_website_data(website)
-                            if emails:
-                                email = ", ".join(emails)
-                        except Exception:
-                            pass
-
-                    item = {
-                        "name": name,
-                        "phone": phone,
-                        "address": address,
-                        "has_website": has_website,
-                        "website": website,
-                        "maps_link": maps_link,
-                        "email": email,
-                    }
-                    task["results"].append(item)
-                    task["count"] = len(task["results"])
-                except Exception:
-                    continue
-
-        task["logs"].append(
-            f"[{datetime.now().strftime('%H:%M:%S')}] Scraping completed successfully! Total records: {len(task['results'])}"
-        )
-        task["status"] = "completed"
+        if task.get("aborted"):
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopped by user. {len(task['results'])} leads saved.")
+            task["status"] = "stopped"
+        else:
+            task["logs"].append(
+                f"[{datetime.now().strftime('%H:%M:%S')}] Finished! Scraped {len(task['results'])} leads."
+            )
+            task["status"] = "completed"
 
     except Exception as e:
-        task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Error during scraping: {str(e)}")
-        task["status"] = "failed"
-        task["error"] = str(e)
+        if task.get("aborted"):
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Scraping stopped.")
+            task["status"] = "stopped"
+        else:
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {str(e)}")
+            task["status"] = "failed"
+            task["error"] = str(e)
     finally:
+        task["finished_at"] = time.time()
         if driver:
             try:
                 driver.quit()
             except Exception:
                 pass
-        task["finished_at"] = time.time()
+        task["driver"] = None
 
 
 @app.route("/")
@@ -240,6 +270,7 @@ def start_scrape():
         "started_at": None,
         "finished_at": None,
         "aborted": False,
+        "driver": None,
     }
 
     t = threading.Thread(target=run_scraper_thread, args=(task_id, data), daemon=True)
@@ -273,8 +304,17 @@ def get_status(task_id):
 @app.route("/api/stop/<task_id>", methods=["POST"])
 def stop_task(task_id):
     if task_id in tasks:
-        tasks[task_id]["aborted"] = True
-        return jsonify({"success": True, "message": "Stopping task..."})
+        task = tasks[task_id]
+        task["aborted"] = True
+        task["status"] = "stopped"
+        if task.get("driver"):
+            try:
+                task["driver"].quit()
+            except Exception:
+                pass
+            task["driver"] = None
+        task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Stop command received.")
+        return jsonify({"success": True, "message": "Stopped"})
     return jsonify({"success": False, "error": "Task not found"}), 404
 
 
@@ -289,7 +329,6 @@ def download_excel(task_id):
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
     worksheet = workbook.add_worksheet("Leads")
 
-    # Header format
     header_fmt = workbook.add_format(
         {"bold": True, "bg_color": "#1E293B", "font_color": "#F8FAFC", "border": 1, "align": "center"}
     )
