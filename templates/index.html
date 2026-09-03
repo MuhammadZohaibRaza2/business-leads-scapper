@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business Leads Scraper | Google Maps</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand-section">
+                <div class="logo-badge">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                        <circle cx="12" cy="10" r="3"></circle>
+                    </svg>
+                </div>
+                <div>
+                    <h1>Business Leads Scraper</h1>
+                    <p class="subtitle">Extract real-time Google Maps business listings, phone numbers, websites, and emails</p>
+                </div>
+            </div>
+            <div class="header-badges">
+                <span class="status-pill active" id="server-status">
+                    <span class="status-dot"></span> System Ready
+                </span>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <main class="app-content">
+            <!-- Left Panel: Search Form -->
+            <section class="control-panel">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Search Configuration</h2>
+                        <span class="step-indicator">Step 1</span>
+                    </div>
+
+                    <!-- Preset Badges -->
+                    <div class="presets-container">
+                        <span class="preset-label">Quick Presets:</span>
+                        <div class="preset-chips">
+                            <button type="button" class="chip" onclick="setPreset('clinics in', 'Islamabad', 2)">🏥 Clinics in Islamabad</button>
+                            <button type="button" class="chip" onclick="setPreset('hotels in', 'Islamabad', 2)">🏨 Hotels in Islamabad</button>
+                            <button type="button" class="chip" onclick="setPreset('software companies in', 'Islamabad', 2)">💻 Tech Companies</button>
+                            <button type="button" class="chip" onclick="setPreset('dentists in', 'Islamabad', 1)">🦷 Dentists</button>
+                        </div>
+                    </div>
+
+                    <form id="scrape-form">
+                        <!-- Query Input -->
+                        <div class="form-group">
+                            <label for="query-input">
+                                Search Query / Business Category
+                                <span class="tooltip-icon" title="Keywords like 'clinics in', 'restaurants in', 'gyms in'">ℹ️</span>
+                            </label>
+                            <div class="input-wrapper">
+                                <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                                <input type="text" id="query-input" placeholder="e.g. clinics in, car repair in, salons in" required value="clinics in">
+                            </div>
+                        </div>
+
+                        <!-- Places Input -->
+                        <div class="form-group">
+                            <label for="places-input">
+                                Locations (Comma Separated)
+                                <span class="tooltip-icon" title="Enter one or multiple cities/areas separated by commas">ℹ️</span>
+                            </label>
+                            <div class="input-wrapper">
+                                <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                                    <circle cx="12" cy="10" r="3"></circle>
+                                </svg>
+                                <input type="text" id="places-input" placeholder="e.g. Islamabad, Rawalpindi, Lahore" required value="Islamabad">
+                            </div>
+                        </div>
+
+                        <!-- Depth Slider -->
+                        <div class="form-group">
+                            <div class="slider-label-row">
+                                <label for="pages-slider">Scraping Depth / Pages</label>
+                                <span class="slider-value" id="pages-val">2 (approx. 40-60 leads)</span>
+                            </div>
+                            <input type="range" id="pages-slider" min="1" max="5" value="2" oninput="updateDepthLabel(this.value)">
+                        </div>
+
+                        <!-- Switches -->
+                        <div class="toggles-grid">
+                            <label class="toggle-card">
+                                <input type="checkbox" id="skip-duplicates" checked>
+                                <span class="toggle-slider"></span>
+                                <div class="toggle-text">
+                                    <strong>Filter Duplicates</strong>
+                                    <small>Skip repeating addresses</small>
+                                </div>
+                            </label>
+
+                            <label class="toggle-card">
+                                <input type="checkbox" id="scrape-website">
+                                <span class="toggle-slider"></span>
+                                <div class="toggle-text">
+                                    <strong>Scrape Emails</strong>
+                                    <small>Crawl website for contact emails</small>
+                                </div>
+                            </label>
+                        </div>
+
+                        <!-- Submit Buttons -->
+                        <div class="actions-row">
+                            <button type="submit" id="start-btn" class="btn btn-primary">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                                <span>Start Scraping</span>
+                            </button>
+                            <button type="button" id="stop-btn" class="btn btn-danger" style="display: none;" onclick="stopCurrentScrape()">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="6" y="6" width="12" height="12"></rect>
+                                </svg>
+                                <span>Stop</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Logs Box -->
+                <div class="card logs-card">
+                    <div class="card-header">
+                        <h2>Live Activity Log</h2>
+                        <span class="live-pulse" id="live-indicator" style="display:none;">LIVE</span>
+                    </div>
+                    <div class="logs-console" id="logs-console">
+                        <div class="log-entry system">Ready. Enter search parameters and click 'Start Scraping'.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Stats & Results -->
+            <section class="results-panel">
+                <!-- Stats Row -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon count-icon">📋</div>
+                        <div class="stat-details">
+                            <span class="stat-title">Total Leads</span>
+                            <span class="stat-number" id="stat-total">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon web-icon">🌐</div>
+                        <div class="stat-details">
+                            <span class="stat-title">With Website</span>
+                            <span class="stat-number" id="stat-website">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon phone-icon">📞</div>
+                        <div class="stat-details">
+                            <span class="stat-title">With Phone</span>
+                            <span class="stat-number" id="stat-phone">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon time-icon">⏱️</div>
+                        <div class="stat-details">
+                            <span class="stat-title">Elapsed Time</span>
+                            <span class="stat-number" id="stat-time">0.0s</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Table Card -->
+                <div class="card table-card">
+                    <div class="table-header-row">
+                        <div>
+                            <h2>Scraped Results</h2>
+                            <p class="table-subtitle" id="table-subtitle">No active search yet</p>
+                        </div>
+                        <div class="table-actions">
+                            <input type="text" id="filter-input" placeholder="🔍 Filter results..." onkeyup="filterTable()">
+                            <a id="download-excel-btn" href="#" class="btn btn-success disabled" download>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                <span>Excel (.xlsx)</span>
+                            </a>
+                            <a id="download-csv-btn" href="#" class="btn btn-secondary disabled" download>
+                                <span>CSV</span>
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="results-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Business Name</th>
+                                    <th>Phone</th>
+                                    <th>Address</th>
+                                    <th>Website</th>
+                                    <th>Google Maps</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-body">
+                                <tr class="empty-state">
+                                    <td colspan="6">
+                                        <div class="empty-content">
+                                            <div class="empty-icon">📍</div>
+                                            <h3>No Leads Extracted Yet</h3>
+                                            <p>Configure search parameters on the left and click <strong>Start Scraping</strong>.</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
