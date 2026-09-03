@@ -7,7 +7,7 @@ import io
 import csv
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
 import xlsxwriter
 
 from selenium import webdriver
@@ -257,8 +257,17 @@ def run_scraper_thread(task_id, params):
 
 
 @app.route("/")
+@app.route("/index")
+@app.route("/api")
+@app.route("/api/index")
+@app.route("/api/index.py")
 def index():
     return render_template("index.html")
+
+
+@app.route("/static/<path:filename>")
+def serve_static(filename):
+    return send_from_directory(os.path.join(BASE_DIR, "static"), filename)
 
 
 @app.route("/api/scrape", methods=["POST"])
