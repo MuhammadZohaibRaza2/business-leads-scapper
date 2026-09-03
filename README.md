@@ -1,41 +1,94 @@
-## 🚨 ATTENTION: This project is no longer maintained as I do not have time for it. If someone is willing to make it up to date with current google maps page, you are all free to submit a PR.
+# Business Leads Scraper
 
-# Google Maps Businesses Scraper
-Built with Python running Selenium, this app allows you to scrape places info from the google maps search results
+A fast and automated Python tool built with **Selenium** to scrape comprehensive business leads and place information directly from Google Maps search results into structured Excel (`.xlsx`) spreadsheets.
 
-## CLI Arguments
-* `--query`
-  * First part of the query you want to execute, excluding any locations, zip codes, etc. For example "Commerical property managers near"
-* `--places`
-  * This is the second part of the query. Comma separated places,zip codes, cities, etc. For example "Washington,Miami,Chicago"
-* `--pages`
-  * Number of pages to scrape for each search. This defaults to 1. If the defined number of pages exceed the number of pages actually in the results, the program will notice that and won't throw an error
-* `--skip-duplicate-addresses`
-  * Flag that if included in the command, will tell the app to not scrape the results which have the addresses that is already in the file
-* `--scrape-website`
-  * Flag that if included in the command, will tell the app to scrape website URLs too. This is optional and defaults fo false because the process is greatly slower with this flag on
+---
 
-## Examples
-The example command you can run with this app is:
-```
-python script.py --query="Commercial property managers near" --places="Washington,Miami,Chicago"
-```
+## 🌟 Features
 
-This will generate three search queries:
-1. Commercial property managers near Washington
-2. Commercial property managers near Miami
-3. Commercial property managers near Chicago
+- **Business Details Extraction**:
+  - 🏢 **Name**: Business or clinic/company name
+  - 📞 **Phone Number**: Direct contact / business phone number
+  - 📍 **Address**: Location / street / market address
+  - 🌐 **Has Website**: Instant `Yes` / `No` status indicator
+  - 🔗 **Website URL**: Direct link to the business website (if available)
+  - 🗺️ **Google Maps Link**: Direct URL to the business Google Maps place card
+  - ✉️ **Email Address**: Crawls target websites to extract contact emails (optional)
+- **Multi-Location Search**: Query multiple cities, areas, or zip codes in a single command.
+- **Configurable Scroll & Pagination Depth**: Control how many batches/pages of results to fetch per location.
+- **Duplicate Filtering**: Built-in address and place deduplication.
+- **Excel Export**: Exports cleanly formatted data directly to `ScrapedData_GoogleMaps.xlsx`.
+- **Headless Chrome Execution**: Runs quietly in the background without popups.
 
-The above command will scrape all **Commercial property managers** that are **near Washington, Miami and Chicago**.
+---
 
-### Scraping the website too
-The app allows you to scrape the website urls for each company. This is disabled by default as it slows down the process.
-You can enable this by including a flag `--scrape-website` in the command like so:
-```
-python script.py --query="Commercial property managers near" --places="Washington,Miami,Chicago" --scrape-website
+## 🚀 Installation & Setup
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/MuhammadZohaibRaza2/business-leads-scapper.git
+cd business-leads-scapper
 ```
 
-This will add "Website" column to the excel output file.
+### 2. Install dependencies
+Ensure Python 3.8+ and Google Chrome are installed on your system.
+```bash
+pip install -r requirements.txt
+```
 
-## Requirements
-As this app is made with Python and Selenium, it is required to install [Python](https://www.python.org/downloads/) and also it requires the Chrome driver, which you can download from [here](https://sites.google.com/a/chromium.org/chromedriver/downloads). Make sure to select your browser version and put the downloaded executable in the PATH variable in your system.
+---
+
+## 🛠️ Usage & CLI Arguments
+
+Run the scraper using `script.py`:
+
+```bash
+python script.py --query="<search query>" --places="<comma,separated,places>" [options]
+```
+
+### Available Arguments:
+
+| Argument | Type | Required | Description |
+| :--- | :---: | :---: | :--- |
+| `--query` | `str` | **Yes** | Base search keyword/query (e.g. `"clinics in"`, `"restaurants near"`, `"lawyers in"`). |
+| `--places` | `str` | **Yes** | Comma-separated list of cities, towns, or zip codes (e.g. `"Islamabad,Rawalpindi,Lahore"`). |
+| `--pages` | `int` | No | Depth / scroll level for search results (default: `1`). |
+| `--scrape-website` | `flag` | No | Enables crawling target websites to discover email addresses. |
+| `--skip-duplicate-addresses` | `flag` | No | Automatically ignores businesses that share an already-scraped address. |
+| `--verbose` | `flag` | No | Prints real-time JSON payloads in the terminal for each result. |
+
+---
+
+## 📖 Examples
+
+### 1. Basic Search
+Scrape clinics in Islamabad:
+```bash
+python script.py --query="clinics in" --places="Islamabad" --pages=2
+```
+
+### 2. Multi-City Search
+Scrape hotels across multiple cities:
+```bash
+python script.py --query="hotels in" --places="Islamabad,Lahore,Karachi" --pages=3
+```
+
+### 3. Website & Email Extraction
+Scrape digital marketing agencies and scan their websites for contact emails:
+```bash
+python script.py --query="digital marketing agencies in" --places="Islamabad" --scrape-website --verbose
+```
+
+---
+
+## 📊 Output Format
+
+The scraper automatically writes results to `ScrapedData_GoogleMaps.xlsx` with the following columns:
+
+| Name | Phone | Address | Has Website | Website | Google Maps Link | Email (Optional) |
+| :--- | :--- | :--- | :---: | :--- | :--- | :--- |
+
+---
+
+## 📄 License
+MIT License

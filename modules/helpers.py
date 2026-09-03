@@ -4,22 +4,29 @@ from bs4 import BeautifulSoup
 
 def generate_headers(args, example_dict):
     '''
-    Generates headeers from the data dictionary by capitalizing it's keys.
+    Generates headers from the data dictionary by capitalizing its keys.
 
     Parameters:
-            args (object): Object containging CLI arguments passed as they can affect which columns are needed
+            args (object): Object containing CLI arguments
             example_dict (dict): Data dictionary with keys
 
     Returns:
-            list (list): List of capitalized strings representing headers
+            list (list): List of capitalized/formatted strings representing headers
     '''
-    headers = example_dict.keys()
-    if not args.scrape_website:
-        del example_dict["website"]
+    if not args.scrape_website and "email" in example_dict:
+        del example_dict["email"]
 
-    headers = example_dict.keys()
-    
-    return [header.capitalize() for header in headers]
+    header_names = {
+        "name": "Name",
+        "phone": "Phone",
+        "address": "Address",
+        "has_website": "Has Website",
+        "website": "Website",
+        "maps_link": "Google Maps Link",
+        "email": "Email"
+    }
+
+    return [header_names.get(k, k.replace("_", " ").title()) for k in example_dict.keys()]
 
 def print_table_headers(worksheet, headers):
     '''
