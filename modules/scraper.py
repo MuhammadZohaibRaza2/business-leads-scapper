@@ -215,6 +215,47 @@ def scrape(args):
         cards = driver.execute_script(JS_EXTRACT_ALL_CARDS) or []
         print(f"{fore.GREEN}Found {len(cards)} places for {place}{fore.RESET}")
 
+        # Deep detail enrichment for places where contact details are hidden (e.g. hotels)
+        missing_details = [
+            item for item in cards if not item.get("phone") or not item.get("website")
+        ]
+        if missing_details:
+            print(f"{fore.GREEN}Fetching deep contact details for {len(missing_details)} places...{fore.RESET}")
+            for item in missing_details:
+                maps_url = item.get("maps_link")
+                if not maps_url:
+                    continue
+                try:
+                    driver.get(maps_url)
+                    time.sleep(1.0)
+                    detail_res = driver.execute_script(r'''
+                    const res = {};
+                    const phoneEl = document.querySelector("button[data-item-id^='phone:'], button[aria-label*='Phone:'], a[href^='tel:'], [data-tooltip*='phone' i]");
+                    if (phoneEl) {
+                        const raw = phoneEl.getAttribute('aria-label') || phoneEl.innerText || phoneEl.getAttribute('data-item-id') || '';
+                        res.phone = raw.replace(/^Phone:\s*/i, '').replace(/^phone:tel:/i, '').trim();
+                    }
+                    const webEl = document.querySelector("a[data-item-id='authority'], a[aria-label*='Website:' i], a[aria-label='Open website' i], [data-tooltip*='website' i]");
+                    if (webEl) {
+                        res.website = webEl.href;
+                    }
+                    const addrEl = document.querySelector("button[data-item-id='address'], button[aria-label*='Address:' i]");
+                    if (addrEl) {
+                        const raw = addrEl.getAttribute('aria-label') || addrEl.innerText || '';
+                        res.address = raw.replace(/^Address:\s*/i, '').trim();
+                    }
+                    return res;
+                    ''')
+                    if detail_res.get("phone") and not item.get("phone"):
+                        item["phone"] = detail_res["phone"]
+                    if detail_res.get("website") and not item.get("website"):
+                        item["website"] = detail_res["website"]
+                        item["has_website"] = "Yes"
+                    if detail_res.get("address") and (not item.get("address") or len(item.get("address", "")) < 10):
+                        item["address"] = detail_res["address"]
+                except Exception:
+                    pass
+
         # Parallel address resolution
         incomplete_batch = [
             itm for itm in cards if is_incomplete_address(itm.get("address", ""))

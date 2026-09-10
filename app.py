@@ -228,24 +228,8 @@ def run_scraper_thread(task_id, params):
             extracted = driver.execute_script(JS_EXTRACT_ALL_CARDS) or []
             task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {len(extracted)} places.")
 
-            # Parallel address resolution for any incomplete/missing addresses
-            incomplete_batch = [
-                itm for itm in extracted if is_incomplete_address(itm.get("address", ""))
-            ]
-            if incomplete_batch and not task.get("aborted"):
-                def enrich_addr(itm):
-                    resolved = resolve_full_address(
-                        itm.get("maps_link", ""),
-                        itm.get("address", ""),
-                        itm.get("name", ""),
-                        place
-                    )
-                    if resolved:
-                        itm["address"] = resolved
-
-                with ThreadPoolExecutor(max_workers=8) as addr_exec:
-                    list(addr_exec.map(enrich_addr, incomplete_batch))
-
+            # Filter duplicates first
+            unique_batch = []
             for item in extracted:
                 if task.get("aborted"):
                     break
@@ -261,7 +245,74 @@ def run_scraper_thread(task_id, params):
                 if addr:
                     addresses_seen.add(addr)
                 names_seen.add(name)
+                unique_batch.append(item)
 
+            # Deep detail enrichment: for places where phone or website is hidden in the search card (e.g. hotels, guest houses)
+            missing_details = [
+                item for item in unique_batch if not item.get("phone") or not item.get("website")
+            ]
+            if missing_details and not task.get("aborted"):
+                task["logs"].append(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Fetching contact details for {len(missing_details)} places..."
+                )
+                for item in missing_details:
+                    if task.get("aborted"):
+                        break
+                    maps_url = item.get("maps_link")
+                    if not maps_url:
+                        continue
+                    try:
+                        driver.get(maps_url)
+                        time.sleep(1.0)
+                        detail_res = driver.execute_script(r'''
+                        const res = {};
+                        const phoneEl = document.querySelector("button[data-item-id^='phone:'], button[aria-label*='Phone:'], a[href^='tel:'], [data-tooltip*='phone' i]");
+                        if (phoneEl) {
+                            const raw = phoneEl.getAttribute('aria-label') || phoneEl.innerText || phoneEl.getAttribute('data-item-id') || '';
+                            res.phone = raw.replace(/^Phone:\s*/i, '').replace(/^phone:tel:/i, '').trim();
+                        }
+                        const webEl = document.querySelector("a[data-item-id='authority'], a[aria-label*='Website:' i], a[aria-label='Open website' i], [data-tooltip*='website' i]");
+                        if (webEl) {
+                            res.website = webEl.href;
+                        }
+                        const addrEl = document.querySelector("button[data-item-id='address'], button[aria-label*='Address:' i]");
+                        if (addrEl) {
+                            const raw = addrEl.getAttribute('aria-label') || addrEl.innerText || '';
+                            res.address = raw.replace(/^Address:\s*/i, '').trim();
+                        }
+                        return res;
+                        ''')
+                        if detail_res.get("phone") and not item.get("phone"):
+                            item["phone"] = detail_res["phone"]
+                        if detail_res.get("website") and not item.get("website"):
+                            item["website"] = detail_res["website"]
+                            item["has_website"] = "Yes"
+                        if detail_res.get("address") and (not item.get("address") or len(item.get("address", "")) < 10):
+                            item["address"] = detail_res["address"]
+                    except Exception:
+                        pass
+
+            # Parallel address resolution for any remaining incomplete/missing addresses
+            incomplete_batch = [
+                itm for itm in unique_batch if is_incomplete_address(itm.get("address", ""))
+            ]
+            if incomplete_batch and not task.get("aborted"):
+                def enrich_addr(itm):
+                    resolved = resolve_full_address(
+                        itm.get("maps_link", ""),
+                        itm.get("address", ""),
+                        itm.get("name", ""),
+                        place
+                    )
+                    if resolved:
+                        itm["address"] = resolved
+
+                with ThreadPoolExecutor(max_workers=8) as addr_exec:
+                    list(addr_exec.map(enrich_addr, incomplete_batch))
+
+            for item in unique_batch:
+                if task.get("aborted"):
+                    break
                 task["results"].append(item)
                 task["count"] = len(task["results"])
 
