@@ -40,7 +40,7 @@ cards.forEach(card => {
     
     // Title/Name
     let name = lines[0];
-    const nameEl = card.querySelector('div.qBF1Pd');
+    const nameEl = card.querySelector('div.qBF1Pd, div.fontHeadlineSmall');
     if (nameEl && nameEl.innerText.trim()) {
         name = nameEl.innerText.trim();
     }
@@ -54,34 +54,64 @@ cards.forEach(card => {
     
     // Website Link
     let website = '';
-    const webEl = card.querySelector('a[data-value="Website"], a[aria-label*="Website"]');
+    const webEl = card.querySelector('a[data-value="Website"], a[aria-label*="Website"], a[aria-label*="website"]');
     if (webEl && webEl.href) {
         website = webEl.href;
     }
     
-    // Phone Number Regex
+    // Phone Number Extraction
     let phone = '';
-    const phoneMatches = text.match(/(\+?92[\s\d-]{8,}|\(0\d{2,3}\)[\s\d-]+|03\d{2}[\s\d-]{7,}|\+?\d{1,3}[\s-]\(?\d{2,4}\)?[\s-]\d{3,4}[\s-]\d{3,4})/);
-    if (phoneMatches) {
-        phone = phoneMatches[0].trim();
+    const phoneEl = card.querySelector('span.UsdlK, [data-phone-number], a[href^="tel:"]');
+    if (phoneEl) {
+        phone = phoneEl.innerText.trim() || phoneEl.getAttribute('href').replace('tel:', '').trim();
+    }
+    
+    if (!phone) {
+        for (let line of lines) {
+            const parts = line.split(/[·•]/);
+            for (let part of parts) {
+                part = part.trim();
+                const digits = part.replace(/\D/g, '');
+                if (digits.length >= 6 && digits.length <= 15 && !part.includes('★') && !part.toLowerCase().includes('review') && !part.toLowerCase().includes('min') && !part.toLowerCase().includes('km') && !part.toLowerCase().includes('mi')) {
+                    if (/^(\+?\d{1,4}[\s.-]?)?\(?\d{1,4}\)?[\s.-]?\d{2,4}[\s.-]?\d{2,5}([\s.-]?\d{1,4})?$/.test(part)) {
+                        phone = part;
+                        break;
+                    }
+                }
+            }
+            if (phone) break;
+        }
+    }
+    
+    if (!phone) {
+        const matches = text.match(/(\+\d{1,4}[\s.-]\d{2,4}[\s.-]\d{2,5}([\s.-]\d{1,5})?|\+?\d{1,4}[\s.-]\d{3}[\s.-]\d{3,4}|0\d{1,3}[\s.-]\d{3,4}[\s.-]?\d{3,4}|\b800[\s.-]\d{3,6}\b|\(\d{3}\)[\s.-]?\d{3}[\s.-]?\d{4}|\+\d{10,14})/);
+        if (matches) {
+            phone = matches[0].trim();
+        }
     }
     
     // Address Extraction
     let address = '';
     for (let line of lines) {
-        if (line.includes('·') && !line.includes('Open') && !line.includes('Closed') && line !== lines[0]) {
+        if (line.includes('·') && !line.includes('Open') && !line.includes('Closed') && line !== lines[0] && !line.includes(name)) {
             const parts = line.split('·').map(p => p.trim()).filter(Boolean);
-            if (parts.length > 1) {
-                address = parts[parts.length - 1];
+            for (let i = parts.length - 1; i >= 0; i--) {
+                const p = parts[i].replace(/[\ue000-\uf8ff]/g, '').trim();
+                if (p.length > 2 && !p.includes('★') && !/^\d+\.?\d*\s*\([\d,]+\)$/.test(p) && p !== phone && !p.toLowerCase().includes('review')) {
+                    address = p;
+                    break;
+                }
             }
         }
     }
-    if (!address && lines.length > 2) {
-        for (let i = 1; i < lines.length; i++) {
-            const c = lines[i];
-            if (!c.includes('Open') && !c.includes('Closed') && !c.includes('Directions') && !c.includes('Website') && !c.includes('★') && !/^\d\.\d$/.test(c)) {
-                address = c;
-                break;
+    if (!address) {
+        for (let line of lines) {
+            if (line !== name && !line.includes('Open') && !line.includes('Closed') && !line.includes('Directions') && !line.includes('Website') && !line.includes('★') && !line.includes(phone) && line.length > 3) {
+                const clean = line.replace(/[\ue000-\uf8ff]/g, '').trim();
+                if (clean && clean !== name && !/^\d+\.?\d*\s*\([\d,]+\)$/.test(clean) && !clean.includes('Gas station') && !clean.includes('store') && !clean.includes('restaurant') && !clean.includes('$$')) {
+                    address = clean;
+                    break;
+                }
             }
         }
     }
