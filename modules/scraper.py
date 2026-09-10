@@ -100,6 +100,18 @@ cards.forEach(card => {
         }
     }
     
+    // If address is still empty or looks like plus code / code, attempt extracting location from name
+    if (!address || address.length <= 5 || /[A-Z0-9]{4}\+[A-Z0-9]{2}/i.test(address)) {
+        const titleParts = name.split(/[|\-–—]/).map(s => s.trim()).filter(Boolean);
+        if (titleParts.length > 1) {
+            let cand = titleParts[titleParts.length - 1];
+            cand = cand.replace(/\s*\(\d+\)\s*/g, '').trim();
+            if (cand && cand.length > 2 && !/^\d+$/.test(cand)) {
+                address = cand;
+            }
+        }
+    }
+    
     results.push({
         name: name,
         phone: phone,
@@ -202,6 +214,25 @@ def scrape(args):
         # Batch extraction via JS
         cards = driver.execute_script(JS_EXTRACT_ALL_CARDS) or []
         print(f"{fore.GREEN}Found {len(cards)} places for {place}{fore.RESET}")
+
+        # Parallel address resolution
+        incomplete_batch = [
+            itm for itm in cards if is_incomplete_address(itm.get("address", ""))
+        ]
+        if incomplete_batch:
+            from concurrent.futures import ThreadPoolExecutor
+            def enrich_addr(itm):
+                resolved = resolve_full_address(
+                    itm.get("maps_link", ""),
+                    itm.get("address", ""),
+                    itm.get("name", ""),
+                    place
+                )
+                if resolved:
+                    itm["address"] = resolved
+
+            with ThreadPoolExecutor(max_workers=8) as addr_exec:
+                list(addr_exec.map(enrich_addr, incomplete_batch))
 
         for current_data in cards:
             name = current_data.get("name", "")

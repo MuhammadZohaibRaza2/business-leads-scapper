@@ -17,7 +17,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 import urllib.parse
-from modules.helpers import get_website_data
+from modules.helpers import get_website_data, resolve_full_address, is_incomplete_address
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -112,6 +112,18 @@ cards.forEach(card => {
                     address = clean;
                     break;
                 }
+            }
+        }
+    }
+    
+    // If address is still empty or looks like plus code / code, attempt extracting location from name
+    if (!address || address.length <= 5 || /[A-Z0-9]{4}\+[A-Z0-9]{2}/i.test(address)) {
+        const titleParts = name.split(/[|\-–—]/).map(s => s.trim()).filter(Boolean);
+        if (titleParts.length > 1) {
+            let cand = titleParts[titleParts.length - 1];
+            cand = cand.replace(/\s*\(\d+\)\s*/g, '').trim();
+            if (cand && cand.length > 2 && !/^\d+$/.test(cand)) {
+                address = cand;
             }
         }
     }
@@ -215,6 +227,24 @@ def run_scraper_thread(task_id, params):
             # Lightning-fast JS extraction
             extracted = driver.execute_script(JS_EXTRACT_ALL_CARDS) or []
             task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {len(extracted)} places.")
+
+            # Parallel address resolution for any incomplete/missing addresses
+            incomplete_batch = [
+                itm for itm in extracted if is_incomplete_address(itm.get("address", ""))
+            ]
+            if incomplete_batch and not task.get("aborted"):
+                def enrich_addr(itm):
+                    resolved = resolve_full_address(
+                        itm.get("maps_link", ""),
+                        itm.get("address", ""),
+                        itm.get("name", ""),
+                        place
+                    )
+                    if resolved:
+                        itm["address"] = resolved
+
+                with ThreadPoolExecutor(max_workers=8) as addr_exec:
+                    list(addr_exec.map(enrich_addr, incomplete_batch))
 
             for item in extracted:
                 if task.get("aborted"):
